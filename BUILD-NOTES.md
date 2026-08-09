@@ -53,6 +53,50 @@ Backups are now written as `ISS-Backup-<date>.json`; rotation still recognises
 the older `Hillside-Backup-*` / `NovaSpire-Backup-*` files so the 30-day cap
 keeps working on existing PCs.
 
+## Version stamping (RENDERER_BUILD)
+`renderer/index.html` carries a build stamp that CI checks against
+`package.json`:
+
+    const RENDERER_BUILD='9.0.0';
+
+It sits at the top of the main `<script>` block (immediately before the debug
+console). The format matters — no spaces around `=`, single quotes, one line —
+because the workflow greps for it. **Bump both numbers together** or the build
+fails with "Version mismatch".
+
+To bump, one command:
+
+    npm version 9.0.1 --no-git-tag-version && \
+    sed -i "s/const RENDERER_BUILD='[^']*'/const RENDERER_BUILD='9.0.1'/" renderer/index.html
+
+Better long-term: have CI *inject* the version instead of asserting it — replace
+the guard step with a step that writes package.json's version into the constant
+before `npm run dist`. Then there is only one number to bump, and the two can
+never drift.
+
+The build number is logged to the in-app debug console (Settings → Diagnostics,
+or Ctrl+Alt+D) on every launch, so a site can be identified over the phone.
+
+## Why there is no package-lock.json
+`actions/setup-node` with `cache: npm` refuses to run without a committed
+lockfile ("Dependencies lock file is not found"), so the cache line is left out
+of the workflow and CI runs a plain `npm install`. That is how this repo has
+always built.
+
+If you want the ~30 s of cache back, add a lockfile — but generate it **on the
+Windows machine you build from**, not on Linux, so platform-specific optional
+dependencies are recorded:
+
+    npm install --package-lock-only
+    git add package-lock.json
+
+then in `.github/workflows/build.yml`:
+- put `cache: npm` back under `Setup Node`
+- change `npm install` to `npm ci`
+
+Re-run the lockfile command any time you change a dependency, or `npm ci` will
+fail with "lock file out of sync".
+
 ## Everything else is unchanged and verified
 - All JS syntax-checks (`node --check` on every file in electron/, both renderer
   script blocks parsed)

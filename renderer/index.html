@@ -2617,6 +2617,15 @@ var qrcode = function() {
 <script>
 'use strict';
 // ══════════════════════════════════════════════════════════
+// BUILD STAMP — must match "version" in package.json.
+// CI fails the build if these two drift apart, so the number shown in the
+// app is always the number that was actually built. Bump BOTH together.
+// Format is deliberate: no spaces around '=', single quotes, one line —
+// the workflow greps for it.
+// ══════════════════════════════════════════════════════════
+const RENDERER_BUILD='9.0.0';
+window.RENDERER_BUILD=RENDERER_BUILD;
+// ══════════════════════════════════════════════════════════
 // DEBUG CONSOLE — permanent, toggleable diagnostic panel.
 // Defined FIRST so every later function can safely call Debug.log().
 // Off by default. Enable in Settings → Diagnostics, or Ctrl+Alt+D.
@@ -7443,6 +7452,7 @@ async function manualSaveAll(){
 
 // Boot sequence
 (async function boot(){
+  try{ Debug.log('ISS Weighbridge — build '+RENDERER_BUILD); }catch(e){}
   document.getElementById('act-logo').innerHTML=issLogo(true,52);
   document.getElementById('login-logo').innerHTML=issLogo(true,52);
 
