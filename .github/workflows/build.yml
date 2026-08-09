@@ -12,16 +12,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # NOTE: no `cache: npm` here on purpose. setup-node's npm cache requires a
+      # committed package-lock.json and fails the job outright without one
+      # ("Dependencies lock file is not found"). This repo intentionally ships
+      # no lockfile — see BUILD-NOTES.md if you want to add one and turn the
+      # cache back on.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Read version
+      - name: Check version stamps match
         id: pkg
         shell: bash
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          REN=$(node -p "(require('fs').readFileSync('renderer/index.html','utf8').match(/RENDERER_BUILD\s*=\s*'([^']+)'/)||[,'MISSING'])[1]")
+          echo "package.json = $PKG / renderer = $REN"
+          if [ "$PKG" != "$REN" ]; then
+            echo "::error::Version mismatch - package.json is $PKG but RENDERER_BUILD is $REN. Bump RENDERER_BUILD in renderer/index.html."
+            exit 1
+          fi
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm install
