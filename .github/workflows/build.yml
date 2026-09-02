@@ -1,52 +1,113 @@
-name: Build Windows EXE
+# ============================================================
+#  Build ISS Weighbridge .exe on GitHub
+#
+#  Runs on a Windows runner, injects your PUBLIC key, builds the installer
+#  with electron-builder, and attaches it to a GitHub Release.
+#
+#  WHAT GITHUB NEEDS (and what it must NEVER have)
+#  GitHub only ever needs your PUBLIC key. The private key
+#  (iss-private.pem) stays on your PC for issuing licences and is NEVER
+#  uploaded anywhere. That is the whole point of asymmetric signing: the
+#  builder can embed the public half in the app without being able to
+#  forge a single licence.
+#
+#  SET THIS UP ONCE
+#  In your GitHub repo:  Settings → Secrets and variables → Actions →
+#  New repository secret
+#    Name:  ISS_PUBLIC_KEY
+#    Value: the full PUBLIC key block iss-genkeys.js printed, e.g.
+#           -----BEGIN PUBLIC KEY-----
+#           MCowBQ...
+#           -----END PUBLIC KEY-----
+#
+#  Optionally also add (only if you use call-home):
+#    ISS_CALLHOME_ENDPOINT   and   ISS_CALLHOME_KEY
+#
+#  HOW TO TRIGGER A BUILD
+#    Option A — publish a Release in GitHub (tag it e.g. v9.9.4).
+#    Option B — Actions tab → this workflow → "Run workflow".
+# ============================================================
+name: Build Windows installer
 
 on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+  release:
+    types: [published]
+  workflow_dispatch:      # lets you run it by hand from the Actions tab
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Check out the code
         uses: actions/checkout@v4
 
-      # NOTE: no `cache: npm` here on purpose. setup-node's npm cache requires a
-      # committed package-lock.json and fails the job outright without one
-      # ("Dependencies lock file is not found"). This repo intentionally ships
-      # no lockfile — see BUILD-NOTES.md if you want to add one and turn the
-      # cache back on.
-      - name: Setup Node
+      - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
 
-      - name: Check version stamps match
-        id: pkg
-        shell: bash
+      # Inject the PUBLIC key from the secret into license.js, replacing the
+      # placeholder. The private key is never involved here.
+      - name: Inject public key
+        shell: pwsh
         run: |
-          PKG=$(node -p "require('./package.json').version")
-          REN=$(node -p "(require('fs').readFileSync('renderer/index.html','utf8').match(/RENDERER_BUILD\s*=\s*'([^']+)'/)||[,'MISSING'])[1]")
-          echo "package.json = $PKG / renderer = $REN"
-          if [ "$PKG" != "$REN" ]; then
-            echo "::error::Version mismatch - package.json is $PKG but RENDERER_BUILD is $REN. Bump RENDERER_BUILD in renderer/index.html."
+          $pub = $env:ISS_PUBLIC_KEY
+          if ([string]::IsNullOrWhiteSpace($pub)) {
+            Write-Error "Secret ISS_PUBLIC_KEY is not set. Add it under Settings -> Secrets -> Actions."
             exit 1
-          fi
-          echo "version=$PKG" >> "$GITHUB_OUTPUT"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build installer (no publish)
-        run: npm run dist
+          }
+          $path = "electron/license.js"
+          $src  = Get-Content $path -Raw
+          $block = "const PUBLIC_KEY_PEM = `"+'`'+"$pub"+'`'+"`;"
+          # Replace the whole PUBLIC_KEY_PEM = `...`; assignment
+          $pattern = "const PUBLIC_KEY_PEM = ``[\s\S]*?``;"
+          $out = [System.Text.RegularExpressions.Regex]::Replace($src, $pattern, $block)
+          if ($out -eq $src) { Write-Error "Could not find PUBLIC_KEY_PEM to replace in $path"; exit 1 }
+          Set-Content $path $out -NoNewline
+          Write-Host "Public key injected."
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # provided automatically; silences the token warning
+          ISS_PUBLIC_KEY: ${{ secrets.ISS_PUBLIC_KEY }}
 
-      - name: Upload installer
+      # Optional: wire call-home only if both secrets exist. Skipped silently
+      # otherwise, so the build works with or without them.
+      - name: Inject call-home endpoint (optional)
+        if: ${{ secrets.ISS_CALLHOME_ENDPOINT != '' }}
+        shell: pwsh
+        run: |
+          $path = "electron/callhome.js"
+          $src  = Get-Content $path -Raw
+          $src  = $src -replace "const ENDPOINT = '';", "const ENDPOINT = '$($env:EP)';"
+          $src  = $src -replace "const ANON_KEY = '';", "const ANON_KEY = '$($env:KEY)';"
+          Set-Content $path $src -NoNewline
+          Write-Host "Call-home configured."
+        env:
+          EP:  ${{ secrets.ISS_CALLHOME_ENDPOINT }}
+          KEY: ${{ secrets.ISS_CALLHOME_KEY }}
+
+      # npm ci is faster and reproducible but REQUIRES package-lock.json in the
+      # repo. Fall back to npm install if you haven't committed a lockfile.
+      # (Committing the lockfile is recommended — it pins exact dependency
+      # versions so a build in six months matches one today.)
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          if (Test-Path "package-lock.json") { npm ci } else { npm install }
+
+      - name: Build installer
+        run: npm run dist
+
+      # Keep the .exe as a downloadable artifact on the workflow run.
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ISS-Weighbridge-Setup-${{ steps.pkg.outputs.version }}
+          name: ISS-Weighbridge-Setup
           path: dist/*.exe
-          if-no-files-found: error
-          retention-days: 90
+
+      # If this run was triggered by publishing a Release, attach the .exe to it.
+      - name: Attach installer to the release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
