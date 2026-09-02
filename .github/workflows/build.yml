@@ -70,10 +70,16 @@ jobs:
 
       # Optional: wire call-home only if both secrets exist. Skipped silently
       # otherwise, so the build works with or without them.
+      # NOTE: `secrets` cannot be used in a step-level `if:` (GitHub rejects the
+      # file with "Unrecognized named-value: 'secrets'"). So the secrets are
+      # passed into env vars and the presence check is done inside the script.
       - name: Inject call-home endpoint (optional)
-        if: ${{ secrets.ISS_CALLHOME_ENDPOINT != '' }}
         shell: pwsh
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:EP) -or [string]::IsNullOrWhiteSpace($env:KEY)) {
+            Write-Host "Call-home secrets not set — skipping (app ships with call-home off)."
+            exit 0
+          }
           $path = "electron/callhome.js"
           $src  = Get-Content $path -Raw
           $src  = $src -replace "const ENDPOINT = '';", "const ENDPOINT = '$($env:EP)';"
