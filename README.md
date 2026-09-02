@@ -1,51 +1,113 @@
-# ISS Weighbridge
+# Promnatic Weighbridge
 
-Electron desktop app by **Industrial Scale Solutions** (Reg. 2025/316125/07), eMalahleni.
-Weighbridge control, ticketing, reporting, shared database, fleet list.
+Weighbridge control, ticketing and reporting. This repository builds a
+Windows installer that opens already branded for **Promnatic Scales** and is
+licensed per machine.
 
-## Repo layout
+Built on the ISS Weighbridge platform by Industrial Scale Solutions. The same
+codebase rebrands for any reseller by swapping one file (see *Rebranding*
+below), so you maintain one product line, not a fork per customer.
+
+---
+
+## What's in here
+
 ```
-package.json                   build config + scripts
-build/                         icon.ico, icon.png
-electron/                      main.js, preload.js, serial.js, tcp.js, storage.js, installer.nsh
-renderer/                      index.html   (the whole app UI)
-.github/workflows/build.yml    cloud build
+electron/            The app (Electron main process + native bridges)
+  main.js            Window, menus, licence enforcement, serial reopen
+  preload.js         The IPC bridge exposed to the UI
+  license.js         Machine-bound licensing (paste your public key here)
+  license-ui.js      The licence screen (drawn by the main process)
+  callhome.js        Optional install ping (inert until configured)
+  serial.js          Serial / indicator handling
+  storage.js         Local storage + backups
+  tcp.js             WeighBox / TCP indicator support
+renderer/
+  index.html         The whole UI
+  brand.js           Promnatic default brand, auto-applied on first run
+build/
+  icon.ico/.png      App icon (Promnatic)
+  installer.nsh      Legacy NSIS include (see note in docs/BUILD-GUIDE.md)
+.github/workflows/
+  build.yml          Builds the .exe on GitHub (see docs/BUILD-GITHUB.md)
+package.json         electron-builder config; version lives here
+licensing-tools/     YOUR tools — NOT shipped in the app
+  setup-keys.bat     One-time: create your signing key
+  issue-licence.bat  Per customer: issue a .isslic
+  iss-genkeys.js     (what setup-keys.bat runs)
+  iss-keygen.js      (what issue-licence.bat runs)
+  make-brand.js      Generate a brand pack for the next reseller
+  test-*.js          Test suites (32 checks)
+docs/                All the how-to guides + the Promnatic brand pack
 ```
 
-## Build in the cloud (no tools needed)
-1. Push this repo to GitHub.
-2. Open the **Actions** tab → wait ~5 min for "Build Windows EXE" to finish (green tick).
-3. Open the run → **Artifacts** → download **ISS-Weighbridge-Setup-\<version\>** → unzip → run the Setup .exe.
+---
 
-Manual trigger: Actions tab → "Build Windows EXE" → **Run workflow**.
+## First-time setup (do once)
 
-## Build locally (needs Node 22 LTS + Git + VS Build Tools "Desktop development with C++")
-```bash
-npm install
-npm run dist
+1. **Make your signing key.** In `licensing-tools`, double-click
+   `setup-keys.bat`. Paste the printed public key into `electron/license.js`,
+   set `FP_SALT`, and back up `iss-private.pem` offline. Full detail in
+   `docs/LICENSING-README.md`.
+   - `iss-private.pem` must NEVER be committed. `.gitignore` blocks it.
+2. **Push to a PRIVATE GitHub repo.** You're selling to competitors — the
+   source stays private. See `docs/BUILD-GITHUB.md`.
+3. **Add your public key as the GitHub secret** `ISS_PUBLIC_KEY` so the cloud
+   build can embed it. Same guide.
+
+## Build the installer
+
+- **On GitHub:** publish a Release (or run the workflow by hand). The
+  `.exe` is attached to the release. See `docs/BUILD-GITHUB.md`.
+- **On your PC:** `npm install` then `npm run dist` → `dist/*.exe`. See
+  `docs/BUILD-GUIDE.md`.
+
+## Licence a customer
+
+1. They install and run; the app shows an **Install ID**.
+2. They send it to you.
+3. Double-click `licensing-tools/issue-licence.bat`, paste the ID, enter the
+   company → you get a `.isslic` file.
+4. Send it back; they load it. It works on that PC only.
+
+New installs get a 14-day grace period, so they can work while you issue the
+licence.
+
+---
+
+## Rebranding for the next reseller
+
+This build is Promnatic because of two things: `renderer/brand.js` and
+`build/icon.*`. For the next company:
+
 ```
-Output: `dist/ISS-Weighbridge-Setup-<version>.exe`
+cd licensing-tools
+node make-brand.js --company "Their Name" --primary "#RRGGBB" --logo logo.png
+```
 
-## Install activation code
-The installer asks for a code before installing: **ISS2025**
-(Edit `electron/installer.nsh` to change it. To remove the prompt, delete the
-`"include": "electron/installer.nsh"` line from package.json → build → nsis.)
+Replace `renderer/brand.js`'s brand object with the new pack (or drop the new
+`.issbrand` in and regenerate brand.js), swap `build/icon.*`, and rebuild.
+Everything else stays the same.
 
-## First run
-Activation code **ISS2025**, then log in as Master (default PIN **1234**).
-Change the Master PIN before handing a site over.
+To ship a **plain ISS** build with no bundled brand, delete `renderer/brand.js`
+and the `<script src="brand.js">` line in `index.html`; the app falls back to
+the ISS default and rebrands only when a pack is imported by hand.
 
-## Upgrading an existing site (Hillside etc.)
-The rename changes Windows' per-app data folder. On first launch the app
-automatically copies the previous install's config and state across —
-activation, users, database, orders and paired COM ports all survive.
-The old folder is left untouched as a fallback. **Take a backup before upgrading**
-(app menu → Open Backup Folder) as a matter of routine.
+---
 
-## Branding
-All company details live in one object, `ISS_CO`, at the top of the config block
-in `renderer/index.html`. Per-client white-labelling is done with a signed brand
-pack (`iss-brand.json`) — packs signed with the old key still validate.
+## Two honest limits
 
-## Version
-Bump `"version"` in package.json before each push so builds are easy to tell apart.
+- **This is Electron, so it can be unpacked.** The licence stops copy-paste
+  installation and casual sharing — the real threat from another scale
+  company. It does not stop a determined cracker who unpacks `app.asar`.
+  `docs/LICENSING-README.md` covers how to raise that cost.
+- **The installer is unsigned.** Windows SmartScreen warns on first run until
+  you buy a code-signing certificate. Not required to ship; worth knowing.
+
+## Tests
+
+```
+cd licensing-tools
+node test-license.js   # 22 checks — copied licences, forgery, clock, drift
+node test-brand.js     # 10 checks — pack validates, tamper rejected, theming
+```

@@ -1,8 +1,8 @@
 {
-  "name": "iss-weighbridge",
-  "productName": "ISS Weighbridge",
-  "version": "9.0.0",
-  "description": "ISS Weighbridge — weighbridge control, ticketing and reporting. Industrial Scale Solutions.",
+  "name": "promnatic-weighbridge",
+  "productName": "Promnatic Weighbridge",
+  "version": "9.9.4",
+  "description": "Promnatic Weighbridge — weighbridge control, ticketing and reporting.",
   "author": {
     "name": "Industrial Scale Solutions",
     "email": "info@industrialscalesolutions.co.za"
@@ -23,8 +23,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "za.co.iss.weighbridge",
-    "productName": "ISS Weighbridge",
+    "appId": "za.co.promnatic.weighbridge",
+    "productName": "Promnatic Weighbridge",
     "copyright": "© 2026 Industrial Scale Solutions (Reg. 2025/316125/07)",
     "npmRebuild": true,
     "asarUnpack": [
@@ -42,7 +42,12 @@
     },
     "win": {
       "target": [
-        { "target": "nsis", "arch": [ "x64" ] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "build/icon.ico"
     },
@@ -53,9 +58,9 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "ISS Weighbridge",
-      "artifactName": "ISS-Weighbridge-Setup-${version}.exe",
-      "uninstallDisplayName": "ISS Weighbridge ${version}"
+      "shortcutName": "Promnatic Weighbridge",
+      "artifactName": "Promnatic-Weighbridge-Setup-${version}.exe",
+      "uninstallDisplayName": "Promnatic Weighbridge ${version}"
     }
   }
 }

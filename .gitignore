@@ -1,0 +1,26 @@
+# ── SECRETS — never commit these ────────────────────────────────────────
+# The licence signing key. If this reaches the repo, anyone who can see the
+# repo can issue licences for any machine and the whole scheme is finished.
+# It belongs in GitHub Secrets, not in git. See BUILD-GITHUB.md.
+iss-private.pem
+*.pem
+*.key
+
+# Issued licence files and customer requests — no reason for these in git.
+*.isslic
+*.issreq
+
+# Generated brand packs (rebuildable from make-brand.js; keep source, not output)
+*.issbrand
+
+# ── Build output ────────────────────────────────────────────────────────
+dist/
+out/
+node_modules/
+
+# ── Editor / OS noise ───────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+npm-debug.log*
