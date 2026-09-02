@@ -8,11 +8,34 @@ const { SerialManager } = require('./serial');
 const { TcpManager } = require('./tcp');
 let tcp = new TcpManager();
 const { Storage } = require('./storage');
+const { License } = require('./license');
+const { licenseHTML } = require('./license-ui');
+const { pingInstall } = require('./callhome');
 
 const isDev = !app.isPackaged;
 let win = null;
 let serial = null;
 let storage = null;
+let lic = null;
+let licWin = null;
+
+// ── Last-resort guard for serial I/O ────────────────────────────────────────
+// A COM write that fails after the handle is gone ("Writing to COM port
+// (GetOverlappedResult): Operation aborted") arrives asynchronously and, with
+// no listener left on the stream, becomes an uncaught exception — which
+// Electron shows as "A JavaScript error occurred in the main process" and which
+// interrupts the clerk mid-transaction. serial.js now handles these at source;
+// this net catches any that still slip through so the app logs and carries on.
+// Anything that is NOT recognisable serial noise is re-thrown untouched, so
+// real bugs still surface instead of being silently swallowed.
+process.on('uncaughtException', (err) => {
+  const msg = String((err && err.message) || err || '');
+  if (/COM port|GetOverlappedResult|Operation aborted|Writing to|Port is not open/i.test(msg)) {
+    console.warn('[serial] absorbed async port error: ' + msg);
+    return;
+  }
+  throw err;
+});
 
 // single instance — a weighbridge PC runs exactly one
 const gotLock = app.requestSingleInstanceLock();
@@ -60,19 +83,49 @@ function createWindow() {
   // packs files (asar on/off, app vs app.asar), the renderer can sit in a few
   // places. Try each; if all fail, show an inline page listing what we tried.
   const fs = require('fs');
-  const candidates = [
+  // ── Hot-swap override ──────────────────────────────────────────────
+  // The packed renderer lives inside app.asar, so changing the UI normally
+  // means rebuilding and reinstalling the EXE on every site PC. These two
+  // paths are checked FIRST: drop an index.html in either one and restart the
+  // app to run it. No rebuild, no installer, no uninstall.
+  //   1. %APPDATA%\ISS Weighbridge\renderer\index.html   (per-user)
+  //   2. <folder containing the EXE>\renderer-override\index.html  (per-machine)
+  // An active override is announced in the window title and the console so a
+  // stale override can never silently shadow a real upgrade.
+  // SECURITY: the override loads an index.html from OUTSIDE the packaged
+  // app, so it can replace every renderer-side check in the software. If it
+  // were honoured on an unlicensed machine it would be the easiest possible
+  // way round the licence — drop in a patched UI and carry on. It is
+  // therefore only offered on a machine that holds a valid licence, or in
+  // development. Enforcement itself lives in the main process regardless.
+  const _licState = lic ? lic.status().state : 'expired';
+  const _overrideAllowed = isDev || _licState === 'licensed';
+  const overrides = _overrideAllowed ? [
+    path.join(app.getPath('userData'), 'renderer', 'index.html'),
+    path.join(path.dirname(app.getPath('exe')), 'renderer-override', 'index.html'),
+  ] : [];
+  const candidates = overrides.concat([
     path.join(__dirname, '..', 'renderer', 'index.html'),
     path.join(__dirname, 'renderer', 'index.html'),
     path.join(process.resourcesPath || '', 'app', 'renderer', 'index.html'),
     path.join(process.resourcesPath || '', 'app.asar', 'renderer', 'index.html'),
     path.join(app.getAppPath(), 'renderer', 'index.html'),
-  ];
+  ]);
   let loaded = null;
   for (const p of candidates) {
     try { if (p && fs.existsSync(p)) { loaded = p; break; } } catch (_) {}
   }
   if (loaded) {
+    const isOverride = overrides.indexOf(loaded) !== -1;
+    console.log('[renderer] loading ' + loaded + (isOverride ? '  ← OVERRIDE ACTIVE' : ''));
     win.loadFile(loaded);
+    if (isOverride) {
+      const stamp = (() => { try { return fs.statSync(loaded).mtime.toISOString().slice(0, 16).replace('T', ' '); } catch (_) { return ''; } })();
+      win.on('page-title-updated', (e) => {
+        e.preventDefault();
+        win.setTitle('ISS Weighbridge — UI OVERRIDE (' + stamp + ')');
+      });
+    }
   } else {
     const tried = candidates.map(p => '• ' + p).join('<br>');
     const html = '<body style="background:#0E0E10;color:#eee;font:14px system-ui;padding:30px">' +
@@ -139,6 +192,33 @@ function buildMenu() {
     ] },
     { label: 'Help', submenu: [
       { label: `Version ${app.getVersion()}`, enabled: false },
+      { label: 'Update UI — open override folder…', click: async () => {
+        const fs2 = require('fs');
+        const dir = path.join(app.getPath('userData'), 'renderer');
+        try { fs2.mkdirSync(dir, { recursive: true }); } catch (_) {}
+        const active = fs2.existsSync(path.join(dir, 'index.html'));
+        shell.openPath(dir);
+        dialog.showMessageBox(win, {
+          type: 'info',
+          title: 'Update the UI without reinstalling',
+          message: active ? 'An override is currently ACTIVE.' : 'No override is active — the built-in UI is running.',
+          detail: 'Copy a new index.html into the folder that just opened, then restart ISS Weighbridge.\n\n' +
+                  dir + '\n\nWhile an override is active the window title says "UI OVERRIDE". ' +
+                  'Delete index.html from that folder and restart to go back to the version built into the EXE — ' +
+                  'do that before installing a new EXE, or the old override will shadow the upgrade.'
+        });
+      } },
+      { label: 'Update UI — remove override', click: async () => {
+        const fs2 = require('fs');
+        const f = path.join(app.getPath('userData'), 'renderer', 'index.html');
+        let msg;
+        try { if (fs2.existsSync(f)) { fs2.unlinkSync(f); msg = 'Override removed. Restart to load the built-in UI.'; } else msg = 'There was no override to remove.'; }
+        catch (e) { msg = 'Could not remove it: ' + e.message; }
+        dialog.showMessageBox(win, { type: 'info', title: 'UI override', message: msg });
+      } },
+      { type: 'separator' },
+      { label: 'Licence…', click: () => showLicenseInfo() },
+      { type: 'separator' },
       { label: 'Serial Diagnostics…', click: async () => {
         let info = { available: false, ports: [], bridges: {}, loadError: null, runtime: {} };
         try { info = await serial.diagnostics(); } catch (_) {}
@@ -176,6 +256,81 @@ function buildMenu() {
     ] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  LICENCE ENFORCEMENT
+//  Runs here, in the main process, on purpose. The renderer is
+//  replaceable through the override folder, so a check that lived in
+//  index.html could be deleted with a text editor.
+// ══════════════════════════════════════════════════════════════════
+function showLicenseWindow(message) {
+  const st = lic.status();
+  if (licWin && !licWin.isDestroyed()) { licWin.focus(); return; }
+  licWin = new BrowserWindow({
+    width: 720, height: 760, resizable: false, backgroundColor: '#0E1B2E',
+    title: 'ISS Weighbridge — Licence', autoHideMenuBar: true,
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
+  });
+  const html = licenseHTML(st, lic.request({ version: app.getVersion() }), message);
+  licWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  licWin.on('closed', () => { licWin = null; });
+}
+
+/* Read-only view, reachable from the Help menu at any time. */
+function showLicenseInfo() {
+  const st = lic.status();
+  const line = {
+    licensed: 'Licensed',
+    grace: 'Trial — ' + st.daysLeft + ' day(s) remaining',
+    drift: 'Hardware changed — ' + st.daysLeft + ' day(s) to re-license',
+    expired: 'NOT LICENSED',
+    invalid: 'Licence invalid',
+  }[st.state] || st.state;
+  dialog.showMessageBox(win || licWin, {
+    type: st.state === 'licensed' ? 'info' : 'warning',
+    title: 'Licence',
+    message: line,
+    detail: 'Install ID: ' + st.installId + '\n' +
+            (st.lic ? 'Issued to: ' + st.lic.company + (st.lic.site ? ' (' + st.lic.site + ')' : '') + '\n' +
+                      'Expires: ' + (st.lic.expires || 'never') + '\n' : '') +
+            (st.reason ? '\n' + st.reason + '\n' : '') +
+            '\nThis licence is tied to this computer. To move it to another PC, ' +
+            'contact Industrial Scale Solutions for a replacement.',
+    buttons: st.state === 'licensed' ? ['Close'] : ['Close', 'Enter licence…'],
+  }).then(r => { if (r.response === 1) showLicenseWindow(); });
+}
+
+function wireLicenseIpc() {
+  ipcMain.handle('iss-lic-status', () => lic.status());
+  ipcMain.handle('iss-lic-request', () => lic.request({ version: app.getVersion() }));
+  ipcMain.handle('iss-lic-save-request', async () => {
+    const r = await dialog.showSaveDialog(licWin || win, {
+      title: 'Save licence request',
+      defaultPath: lic.installId() + '.issreq',
+      filters: [{ name: 'ISS licence request', extensions: ['issreq'] }],
+    });
+    if (r.canceled || !r.filePath) return { ok: false };
+    try {
+      require('fs').writeFileSync(r.filePath, lic.request({ version: app.getVersion() }));
+      return { ok: true, path: r.filePath };
+    } catch (e) { return { ok: false, reason: e.message }; }
+  });
+  ipcMain.handle('iss-lic-import', async () => {
+    const r = await dialog.showOpenDialog(licWin || win, {
+      title: 'Select licence file',
+      filters: [{ name: 'ISS licence', extensions: ['isslic', 'txt'] }],
+      properties: ['openFile'],
+    });
+    if (r.canceled || !r.filePaths.length) return { ok: false };
+    let text = '';
+    try { text = require('fs').readFileSync(r.filePaths[0], 'utf8'); }
+    catch (e) { return { ok: false, reason: 'Could not read that file.' }; }
+    return lic.activate(text);
+  });
+  ipcMain.handle('iss-lic-activate', (_e, token) => lic.activate(token));
+  ipcMain.handle('iss-lic-restart', () => { app.relaunch(); app.exit(0); });
 }
 
 // ---- IPC: the full issDesktop contract ----
@@ -264,10 +419,29 @@ async function reopenSavedPorts(attempt = 1) {
 
 app.whenReady().then(async () => {
   storage = new Storage(app.getPath('userData'));
+  lic = new License(app.getPath('userData'));
   serial = new SerialManager();
   buildMenu();
-  createWindow();
   wireIpc();
+  wireLicenseIpc();
+
+  // An install that was never licensed and has run out of trial does not
+  // get a weighbridge. A PAYING site whose hardware merely drifted is not
+  // in this branch — allowsWeighing() keeps it running and the renderer
+  // shows a banner instead. Stopping a working bridge mid-shift over a
+  // replaced hard drive is how you lose a customer.
+  if (!lic.allowsWeighing()) { showLicenseWindow(); return; }
+
+  createWindow();
+
+  // Best-effort install ping — see callhome.js. No-ops unless an endpoint is
+  // configured there, and never blocks or throws. The last-ping timestamp
+  // rides in the licence record so it survives a userData wipe.
+  pingInstall(lic.status(), {
+    version: app.getVersion(),
+    getLastPing: () => Date.parse(lic.rec.lastPing || '') || 0,
+    setLastPing: (t) => { lic.rec.lastPing = new Date(t).toISOString(); lic._save(); },
+  }).catch(() => {});
   // give the renderer a moment to bind serial event handlers, then reopen
   // re-attach on every load (covers renderer reloads), not just the first
   win.webContents.on('did-finish-load', () => setTimeout(() => reopenSavedPorts(), 800));

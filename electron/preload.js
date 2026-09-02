@@ -47,4 +47,15 @@ contextBridge.exposeInMainWorld('issDesktop', {
   sharedStatus:   () => ipcRenderer.invoke('iss-shared-status'),
   pickSyncFolder: () => ipcRenderer.invoke('iss-pick-sync-folder'),
   openBackupFolder: () => ipcRenderer.invoke('iss-open-backup-folder'),
+
+  // ---- licence (read-only from the renderer) ----
+  // The renderer uses this to show a banner and to lock the office-side
+  // tabs. It is NOT where the licence is enforced: the main process has
+  // already decided whether this copy runs at all. Anything here can be
+  // patched out by whoever holds the machine, which is exactly why none
+  // of it is load-bearing.
+  licStatus: () => ipcRenderer.invoke('iss-lic-status'),
+  licRequest: () => ipcRenderer.invoke('iss-lic-request'),
+  licImport: () => ipcRenderer.invoke('iss-lic-import'),
+  licActivate: (token) => ipcRenderer.invoke('iss-lic-activate', token),
 });

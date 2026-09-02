@@ -111,6 +111,9 @@ class SerialManager {
     if (!p) return;
     try { clearInterval(b.pollTimer); } catch (_) {}
     try { p.removeAllListeners(); } catch (_) {}
+    // An in-flight write can still fail after this point. Without a listener an
+    // 'error' event becomes an uncaught exception, so leave a sink attached.
+    try { p.on('error', () => {}); } catch (_) {}
     try { if (p.isOpen) p.close(() => {}); } catch (_) {}
     try { if (typeof p.destroy === 'function') p.destroy(); } catch (_) {}
     b.port = null;
@@ -250,7 +253,24 @@ class SerialManager {
         if (o.pollCmd) {
           const cmd = Buffer.from(unescape(o.pollCmd), 'latin1');
           clearInterval(b.pollTimer);
-          b.pollTimer = setInterval(() => { try { port.write(cmd); } catch (_) {} }, Math.max(150, parseInt(o.pollMs) || 1000));
+          // A poll write can land in the window where the port is closing (cable
+          // pull, reconnect, app exit). node-serialport reports that failure
+          // ASYNCHRONOUSLY — "Writing to COM port (GetOverlappedResult): Operation
+          // aborted" — so a try/catch around write() never sees it. With the
+          // listeners already stripped by _cleanupPort, it surfaced as an uncaught
+          // exception and Electron threw up the JavaScript-error dialog.
+          // Fix: verify we still own an open handle, and always pass a write
+          // callback so the error is delivered there instead of thrown.
+          b.pollTimer = setInterval(() => {
+            if (b.port !== port || !port.isOpen || port.destroyed) { clearInterval(b.pollTimer); return; }
+            try {
+              port.write(cmd, (err) => {
+                if (err) console.warn('[serial] bridge' + bi + ' poll write failed: ' + err.message);
+              });
+            } catch (e) {
+              console.warn('[serial] bridge' + bi + ' poll write threw: ' + (e && e.message));
+            }
+          }, Math.max(150, parseInt(o.pollMs) || 1000));
         }
         done({ ok: true });
       });
@@ -288,6 +308,7 @@ class SerialManager {
       // stream regardless of isOpen. Dropping the reference without destroying is
       // exactly what orphans the handle and makes the port look "occupied".
       try { p.removeAllListeners(); } catch (_) {}
+      try { p.on('error', () => {}); } catch (_) {}   // absorb late async write errors
       // Reset pulse while the port is STILL OPEN (control lines can't be set once
       // closed). Toggling DTR/RTS low nudges CH340/FTDI adapters to release cleanly.
       try { if (p.isOpen) p.set({ dtr: false, rts: false }, () => {}); } catch (_) {}
