@@ -47,48 +47,16 @@ jobs:
           node-version: 20
 
       # Inject the PUBLIC key from the secret into license.js, replacing the
-      # placeholder. The private key is never involved here.
-      - name: Inject public key
-        shell: pwsh
-        run: |
-          $pub = $env:ISS_PUBLIC_KEY
-          if ([string]::IsNullOrWhiteSpace($pub)) {
-            Write-Error "Secret ISS_PUBLIC_KEY is not set. Add it under Settings -> Secrets -> Actions."
-            exit 1
-          }
-          $path = "electron/license.js"
-          $src  = Get-Content $path -Raw
-          $block = "const PUBLIC_KEY_PEM = `"+'`'+"$pub"+'`'+"`;"
-          # Replace the whole PUBLIC_KEY_PEM = `...`; assignment
-          $pattern = "const PUBLIC_KEY_PEM = ``[\s\S]*?``;"
-          $out = [System.Text.RegularExpressions.Regex]::Replace($src, $pattern, $block)
-          if ($out -eq $src) { Write-Error "Could not find PUBLIC_KEY_PEM to replace in $path"; exit 1 }
-          Set-Content $path $out -NoNewline
-          Write-Host "Public key injected."
+      # Inject the PUBLIC key (and optional call-home) via a Node script.
+      # Node handles license.js as plain text, so there is no shell escaping of
+      # the PEM block or the backtick template literal — which is what broke the
+      # earlier inline-PowerShell version. The private key is never involved.
+      - name: Inject public key and secrets
+        run: node build-inject.js
         env:
-          ISS_PUBLIC_KEY: ${{ secrets.ISS_PUBLIC_KEY }}
-
-      # Optional: wire call-home only if both secrets exist. Skipped silently
-      # otherwise, so the build works with or without them.
-      # NOTE: `secrets` cannot be used in a step-level `if:` (GitHub rejects the
-      # file with "Unrecognized named-value: 'secrets'"). So the secrets are
-      # passed into env vars and the presence check is done inside the script.
-      - name: Inject call-home endpoint (optional)
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:EP) -or [string]::IsNullOrWhiteSpace($env:KEY)) {
-            Write-Host "Call-home secrets not set — skipping (app ships with call-home off)."
-            exit 0
-          }
-          $path = "electron/callhome.js"
-          $src  = Get-Content $path -Raw
-          $src  = $src -replace "const ENDPOINT = '';", "const ENDPOINT = '$($env:EP)';"
-          $src  = $src -replace "const ANON_KEY = '';", "const ANON_KEY = '$($env:KEY)';"
-          Set-Content $path $src -NoNewline
-          Write-Host "Call-home configured."
-        env:
-          EP:  ${{ secrets.ISS_CALLHOME_ENDPOINT }}
-          KEY: ${{ secrets.ISS_CALLHOME_KEY }}
+          ISS_PUBLIC_KEY:        ${{ secrets.ISS_PUBLIC_KEY }}
+          ISS_CALLHOME_ENDPOINT: ${{ secrets.ISS_CALLHOME_ENDPOINT }}
+          ISS_CALLHOME_KEY:      ${{ secrets.ISS_CALLHOME_KEY }}
 
       # npm ci is faster and reproducible but REQUIRES package-lock.json in the
       # repo. Fall back to npm install if you haven't committed a lockfile.
