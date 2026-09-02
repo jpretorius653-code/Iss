@@ -42,14 +42,15 @@ const { execFileSync } = require('child_process');
 // it still fingerprints and still shows the Install ID, but every licence
 // is rejected, so builds cannot accidentally ship with no real key.
 const PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
-REPLACE_WITH_YOUR_PUBLIC_KEY
+MCowBQYDK2VwAyEAc+VNJrcmR0Q0ObziGhEy5nRtHr8yWywnk8+CWL+4zS0=
 -----END PUBLIC KEY-----`;
 
-const KEY_READY = PUBLIC_KEY_PEM.indexOf('REPLACE_WITH_YOUR_PUBLIC_KEY') === -1;
+const KEY_READY = PUBLIC_KEY_PEM.indexOf(MCowBQYDK2VwAyEAc+VNJrcmR0Q0ObziGhEy5nRtHr8yWywnk8+CWL+4zS0=
+) === -1;
 
 // Salt for the component hashes. Changing it invalidates every issued
 // licence, so set it once before your first real install and leave it.
-const FP_SALT = 'ISS-WB-FP-v1';
+const FP_SALT = 'ISS';
 
 // How long a brand-new, never-licensed install stays fully usable.
 const GRACE_DAYS = 14;
