@@ -45,8 +45,7 @@ const PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAc+VNJrcmR0Q0ObziGhEy5nRtHr8yWywnk8+CWL+4zS0=
 -----END PUBLIC KEY-----`;
 
-const KEY_READY = PUBLIC_KEY_PEM.indexOf(MCowBQYDK2VwAyEAc+VNJrcmR0Q0ObziGhEy5nRtHr8yWywnk8+CWL+4zS0=
-) === -1;
+const KEY_READY = PUBLIC_KEY_PEM.indexOf(MCowBQYDK2VwAyEAc+VNJrcmR0Q0ObziGhEy5nRtHr8yWywnk8+CWL+4zS0=) === -1;
 
 // Salt for the component hashes. Changing it invalidates every issued
 // licence, so set it once before your first real install and leave it.
